@@ -2,7 +2,7 @@
 ### A Data Scientist's View
 
 > **📝 This project is the visual companion to my Medium blog post:**
-> **[My City Is Running the World Cup. Here's What the Data Actually Says.](YOUR_MEDIUM_URL_HERE)**
+> **[My City Is Running the World Cup. Here's What the Data Actually Says.](https://medium.com/@reddy.nithin.0331/1db60f389ac4)**
 >
 > The blog covers the full analysis — economic skepticism, base camp economics, heat stress models, and legacy metrics. This site makes those numbers interactive.
 
