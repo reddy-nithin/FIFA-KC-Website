@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIFA in Kansas City: A Data Scientist's View</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        navy: '#0F172A',
+                        indigo: '#4F46E5',
+                        amber: '#F59E0B',
+                        emerald: '#10B981',
+                        rose: '#F43F5E',
+                        dark: '#1E293B'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;900&display=swap" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <style>
+        body { background-color: #0F172A; color: #F8FAFC; }
+        .hero-title { font-weight: 900; letter-spacing: -0.02em; }
+        .glass-card {
+            background: rgba(30, 41, 59, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .glass-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px -8px rgba(79, 70, 229, 0.4);
+            border-color: rgba(79, 70, 229, 0.4);
+        }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .map-container { position: relative; width: 100%; height: 500px; background: rgba(15, 23, 42, 0.8); border-radius: 12px; overflow: hidden;}
+        .map-line {
+            position: absolute;
+            border-top: 2px dashed rgba(79, 70, 229, 0.4);
+            transform-origin: 0 50%;
+            z-index: 0;
+            pointer-events: none;
+        }
+        .map-node {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .map-node:hover { transform: translate(-50%, -50%) scale(1.1); }
+        .map-node .tooltip {
+            visibility: hidden; opacity: 0; transition: opacity 0.2s;
+            position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%);
+            width: max-content; max-width: 250px; pointer-events: none; z-index: 20;
+        }
+        .map-node:hover .tooltip { visibility: visible; opacity: 1; }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px; width: 16px;
+            border-radius: 50%;
+            background: #4F46E5;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+        
+        .slide-up {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+        .slide-up.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body class="antialiased overflow-x-hidden">
+
+<script>
+    // System Data Configuration (Hardcoded as requested)
+    const APP_DATA = {
+        openingMatch: new Date('2026-06-16T12:00:00-05:00'),
+        baselineSim: { nflDraftImpact: 164, defaultMultiplier: 1.0, skepticMultiplier: 0.55 },
+        matches: [
+            { date: 'Jun 16', fullDate: '2026-06-16', teams: 'ARG 🇦🇷 v ALG 🇩🇿', stage: 'Group Stage', type: 'group' },
+            { date: 'Jun 20', fullDate: '2026-06-20', teams: 'ECU 🇪🇨 v CUR 🇨🇼', stage: 'Group Stage', type: 'group' },
+            { date: 'Jun 25', fullDate: '2026-06-25', teams: 'TUN 🇹🇳 v NED 🇳🇱', stage: 'Group Stage', type: 'group' },
+            { date: 'Jun 27', fullDate: '2026-06-27', teams: 'ALG 🇩🇿 v AUT 🇦🇹', stage: 'Group Stage', type: 'group' },
+            { date: 'Jul 3',  fullDate: '2026-07-03', teams: 'TBD v TBD', stage: 'Round of 32', type: 'r32' },
+            { date: 'Jul 11', fullDate: '2026-07-11', teams: 'TBD v TBD', stage: 'Quarterfinal', type: 'qf' }
+        ],
+        baseCamps: [
+            { team: 'Argentina', flag: '🇦🇷', facility: 'Compass Minerals NPC', desc: 'State-of-the-art training home of Sporting KC. Secluded yet accessible.' },
+            { team: 'England', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', facility: 'Swope Soccer Village', desc: 'Historic pitches nestled in the lush Swope Park landscape.' },
+            { team: 'Netherlands', flag: '🇳🇱', facility: 'KC Current Facility', desc: 'Brand new, world-class hub built specifically for women’s pro soccer but adapted for WC.' },
+            { team: 'Algeria', flag: '🇩🇿', facility: 'Rock Chalk Park, Lawrence KS', desc: 'Collegiate elite facilities 40 mins west, providing quiet focus.' }
+        ],
+        legacyKpis: [
+            { name: 'Youth Soccer Reg.', baseline: '22,450', src: 'Sporting City', target: '+15%' },
+            { name: 'Sporting KC Att.', baseline: '18,200', src: 'MLS', target: '+5% avg' },
+            { name: 'KC Current Att.', baseline: '11,500', src: 'NWSL', target: '+10% avg' },
+            { name: 'Streetcar Ridership', baseline: '1.8M/yr', src: 'KC Streetcar', target: '2.5M/yr' },
+            { name: 'Hotel ADR (July)', baseline: '$145', src: 'Visit KC', target: '$165' },
+            { name: 'KCI Passenger Vol.', baseline: '11.5M/yr', src: 'MCI', target: '13.0M/yr' }
+        ],
+        climateData: {
+            dates: ['Jun 16', 'Jun 20', 'Jun 25', 'Jun 27', 'Jul 3', 'Jul 11'],
+            avgHighs: [30.1, 31.0, 31.8, 32.2, 33.1, 33.9],
+            wbgtEstimates: [26.5, 27.2, 28.1, 28.5, 29.2, 30.1]
+        },
+        comparativeEvents: {
+            labels: ['Big 12 Tourney (Avg)', 'NFL Draft 2023', 'Super Bowl (Avg Host)', 'World Cup KC (Proj)'],
+            visitors: [40, 312, 150, 650],
+            impact: [45, 164, 400, 653]
+        },
+        mapNodes: [
+            { id: 'kci', name: 'KCI Airport', x: 20, y: 15, desc: 'New $1.5B terminal ready for international volumes.' },
+            { id: 'riverfront', name: 'KC Current & Riverfront', x: 50, y: 35, desc: 'Netherlands base camp & downtown expansion.' },
+            { id: 'union', name: 'Union Station & Fan Fest', x: 50, y: 50, desc: 'Central hub for streetcar and official Fan Fest.' },
+            { id: 'arrowhead', name: 'Arrowhead Stadium', x: 80, y: 60, desc: 'GEHA Field. 73,000 capacity. The main event.' },
+            { id: 'swope', name: 'Swope Soccer Village', x: 60, y: 75, desc: 'England base camp. Historic local pitches.' },
+            { id: 'compass', name: 'Compass Minerals NPC', x: 25, y: 65, desc: 'Argentina base camp. Sporting KC HQ.' },
+            { id: 'rockchalk', name: 'Rock Chalk Park', x: 10, y: 80, desc: 'Algeria base camp. Lawrence KS.' }
+        ],
+        mapEdges: [
+            ['kci', 'union'], ['riverfront', 'union'], ['union', 'arrowhead'],
+            ['compass', 'union'], ['swope', 'arrowhead'], ['rockchalk', 'compass']
+        ]
+    };
+</script>
+
+<div class="max-w-7xl mx-auto px-4 md:px-8 py-10 space-y-32">
+    
+    <!-- 1. HERO SECTION -->
+    <section class="text-center pt-8 slide-up">
+        <p class="text-indigo-400 font-bold tracking-widest text-sm uppercase mb-3">A Data Scientist's View</p>
+        <h1 class="hero-title text-5xl md:text-7xl mb-8 flex flex-col md:flex-row items-center justify-center gap-4">
+            <span>FIFA WORLD CUP 26</span>
+            <span class="text-rose-500 hidden md:inline">×</span>
+            <span>KANSAS CITY</span>
+        </h1>
+        
+        <div class="inline-flex items-center gap-6 glass-card px-8 py-4 rounded-full mb-16 border-indigo-500/30">
+            <div class="text-left">
+                <p class="text-xs text-slate-400 uppercase tracking-wider">First Kickoff (ARG v ALG)</p>
+                <div id="countdown" class="text-2xl md:text-3xl font-bold font-mono text-emerald-400">--:--:--:--</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="glass-card rounded-2xl p-8 text-center border-t-4 border-t-indigo-500">
+                <p class="text-slate-400 text-sm font-semibold mb-2">Projected Visitors</p>
+                <p class="text-5xl hero-title text-white">650K</p>
+            </div>
+            <div class="glass-card rounded-2xl p-8 text-center border-t-4 border-t-amber-500">
+                <p class="text-slate-400 text-sm font-semibold mb-2">Matches Hosted</p>
+                <p class="text-5xl hero-title text-white">6</p>
+            </div>
+            <div class="glass-card rounded-2xl p-8 text-center border-t-4 border-t-emerald-500">
+                <p class="text-slate-400 text-sm font-semibold mb-2">Economic Impact</p>
+                <p class="text-5xl hero-title text-white">$653M</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 2. MATCH SCHEDULE TIMELINE -->
+    <section class="slide-up">
+        <h2 class="text-2xl font-bold mb-8 flex items-center gap-3">
+            <span class="w-8 h-1 bg-indigo-500 rounded-full"></span> 
+            Match Schedule
+        </h2>
+        <div class="flex overflow-x-auto gap-6 pb-8 hide-scrollbar snap-x" id="match-timeline">
+            <!-- Populated by JS -->
+        </div>
+    </section>
+
+    <!-- 3. ECONOMIC IMPACT SIMULATOR -->
+    <section class="slide-up relative">
+        <div class="absolute -inset-4 bg-gradient-to-br from-indigo-900/20 to-transparent rounded-3xl -z-10"></div>
+        <h2 class="text-2xl font-bold mb-8 flex items-center gap-3">
+            <span class="w-8 h-1 bg-emerald-500 rounded-full"></span> 
+            Economic Impact Simulator
+        </h2>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            <div class="lg:col-span-4 space-y-8 glass-card p-6 rounded-2xl">
+                <div>
+                    <div class="flex justify-between mb-2">
+                        <label class="text-sm text-slate-300 font-semibold">Total Visitors</label>
+                        <span id="val-visitors" class="text-sm font-bold text-indigo-400">650k</span>
+                    </div>
+                    <input type="range" id="sim-visitors" min="300" max="800" step="10" value="650">
+                </div>
+                
+                <div>
+                    <div class="flex justify-between mb-2">
+                        <label class="text-sm text-slate-300 font-semibold">Avg Daily Spend</label>
+                        <span id="val-spend" class="text-sm font-bold text-indigo-400">$600</span>
+                    </div>
+                    <input type="range" id="sim-spend" min="400" max="1200" step="50" value="600">
+                </div>
+
+                <div>
+                    <label class="text-sm text-slate-300 font-semibold block mb-2">Avg Stay Duration</label>
+                    <select id="sim-stay" class="w-full bg-dark border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-indigo-500">
+                        <option value="1.5">1.5 Days (Dom. regional)</option>
+                        <option value="3.5" selected>3.5 Days (Blended avg)</option>
+                        <option value="6.0">6.0 Days (Intl. long haul)</option>
+                    </select>
+                </div>
+
+                <div class="pt-4 border-t border-slate-700 flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-slate-300 font-semibold mb-1">Apply Leakage Discount</p>
+                        <p class="text-xs text-slate-500">Academic "Skeptic Mode" (45% retention)</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="sim-skeptic" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="lg:col-span-8 glass-card p-6 rounded-2xl">
+                <div class="flex flex-wrap justify-between items-end mb-6 gap-4">
+                    <div>
+                        <p class="text-slate-400 text-sm font-medium">Estimated Direct Impact</p>
+                        <p class="text-4xl font-bold text-emerald-400" id="sim-output-impact">$0M</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-slate-400 text-sm font-medium">vs NFL Draft 2023</p>
+                        <p class="text-2xl font-bold text-slate-200" id="sim-output-multiplier">0x</p>
+                    </div>
+                </div>
+                <div class="h-64 relative w-full">
+                    <canvas id="impactChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 4. BASE CAMP MAP CARDS -->
+    <section class="slide-up">
+        <h2 class="text-2xl font-bold mb-8 flex items-center gap-3">
+            <span class="w-8 h-1 bg-amber-500 rounded-full"></span> 
+            Base Camps Selected
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="base-camps-grid">
+            <!-- Populated by JS -->
+        </div>
+    </section>
+
+    <!-- 5. CLIMATE & PERFORMANCE CHART -->
+    <section class="slide-up">
+        <div class="glass-card p-6 md:p-10 rounded-3xl">
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-3">
+                <span class="w-8 h-1 bg-rose-500 rounded-full"></span> 
+                Heat Stress & Performance (WBGT)
+            </h2>
+            <p class="text-slate-400 mb-8 max-w-3xl">
+                Wet-Bulb Globe Temperature (WBGT) goes beyond heat index by measuring temperature, humidity, wind speed, sun angle, and cloud cover. FIFA mandates cooling breaks when WBGT exceeds 28°C and considers match suspensions above 32°C. Kansas City in June/July sits perilously close to these thresholds.
+            </p>
+            <div class="h-[400px] w-full">
+                <canvas id="climateChart"></canvas>
+            </div>
+            <div class="flex gap-6 mt-6 justify-center text-sm">
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> <span class="text-slate-300">< 28°C (Safe)</span></div>
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500"></span> <span class="text-slate-300">28-32°C (Cooling Break)</span></div>
+                <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-rose-500"></span> <span class="text-slate-300">> 32°C (Warning)</span></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 6. COMPARATIVE EVENTS BAR CHART -->
+    <section class="slide-up">
+        <h2 class="text-2xl font-bold mb-8 flex items-center gap-3">
+            <span class="w-8 h-1 bg-indigo-400 rounded-full"></span> 
+            KC Sporting Event Comparisons
+        </h2>
+        <div class="glass-card p-6 rounded-2xl h-[400px] w-full">
+            <canvas id="comparativeChart"></canvas>
+        </div>
+    </section>
+
+    <!-- 7. KC WORLD CUP CORRIDOR (METRO MAP) -->
+    <section class="slide-up">
+        <h2 class="text-2xl font-bold mb-8 flex items-center gap-3">
+            <span class="w-8 h-1 bg-indigo-500 rounded-full"></span> 
+            Kansas City World Cup Corridor
+        </h2>
+        <div class="map-container border border-slate-700 shadow-xl" id="kc-map">
+            <!-- Map lines and nodes generated via JS -->
+            <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-navy to-transparent h-24 z-0 pointer-events-none"></div>
+            <div class="absolute bottom-4 left-4 z-10 text-xs text-slate-400 bg-navy/80 p-2 rounded">
+                Conceptual diagram • Not to scale
+            </div>
+        </div>
+    </section>
+
+    <!-- 8. LEGACY KPI TRACKER -->
+    <section class="slide-up">
+        <div class="flex justify-between items-end mb-8">
+            <h2 class="text-2xl font-bold flex items-center gap-3">
+                <span class="w-8 h-1 bg-slate-500 rounded-full"></span> 
+                Legacy KPI Tracker
+            </h2>
+            <span class="px-3 py-1 bg-slate-800 text-slate-300 text-xs font-bold rounded-full border border-slate-600">COMING LATE 2026</span>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="kpi-grid">
+            <!-- Populated by JS -->
+        </div>
+    </section>
+
+</div>
+
+<!-- 9. FOOTER -->
+<footer class="border-t border-slate-800 bg-black/30 mt-20 slide-up">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-10 flex flex-col md:flex-row justify-between items-center gap-6">
+        <div>
+            <h3 class="font-bold text-white mb-1">Built by The Agentic Data Scientist</h3>
+            <p class="text-sm text-slate-400">UMKC & Google DeepMind Example</p>
+        </div>
+        <div class="flex gap-6 text-sm font-medium">
+            <a href="#" class="text-indigo-400 hover:text-indigo-300 transition-colors">Medium Blog</a>
+            <a href="#" class="text-indigo-400 hover:text-indigo-300 transition-colors">GitHub Repo</a>
+            <a href="#" class="text-indigo-400 hover:text-indigo-300 transition-colors">LinkedIn</a>
+        </div>
+        <div class="text-right">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                Data last updated: Feb 2026
+            </span>
+        </div>
+    </div>
+</footer>
+
+<script>
+    // Utility functions
+    const formatNumber = num => new Intl.NumberFormat('en-US').format(num);
+    const formatCurrency = num => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(num);
+
+    // 1. Countdown Timer
+    function updateCountdown() {
+        const now = new Date();
+        const diff = APP_DATA.openingMatch - now;
+        
+        if (diff <= 0) {
+            document.getElementById('countdown').innerText = "IT'S HERE";
+            return;
+        }
+        
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+        const mins = Math.floor((diff / 1000 / 60) % 60);
+        const secs = Math.floor((diff / 1000) % 60);
+        
+        const pad = n => n.toString().padStart(2, '0');
+        document.getElementById('countdown').innerText = `${days}D ${pad(hours)}H ${pad(mins)}M ${pad(secs)}S`;
+    }
+    setInterval(updateCountdown, 1000);
+    updateCountdown();
+
+    // 2. Render Match Timeline
+    const timelineContainer = document.getElementById('match-timeline');
+    APP_DATA.matches.forEach(match => {
+        let colorClass = match.type === 'group' ? 'indigo' : (match.type === 'r32' ? 'amber' : 'rose');
+        let daysUntil = Math.max(0, Math.floor((new Date(match.fullDate) - new Date()) / (1000 * 60 * 60 * 24)));
+        
+        let card = document.createElement('div');
+        card.className = `glass-card shrink-0 w-72 p-5 rounded-2xl border-l-4 border-l-${colorClass}-500 snap-start relative overflow-hidden`;
+        
+        card.innerHTML = `
+            <div class="absolute top-0 right-0 p-3 opacity-10">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6z"/></svg>
+            </div>
+            <p class="text-sm font-bold text-${colorClass}-400 mb-1">${match.date}</p>
+            <p class="text-xl font-bold text-white mb-3">${match.teams}</p>
+            <div class="flex justify-between items-end mt-4 pt-4 border-t border-slate-700/50">
+                <p class="text-xs text-slate-400 uppercase tracking-wider">${match.stage}</p>
+                <p class="text-xs font-bold ${daysUntil ? 'text-slate-300' : 'text-emerald-400'}">${daysUntil ? `in ${daysUntil} days` : 'TODAY'}</p>
+            </div>
+        `;
+        timelineContainer.appendChild(card);
+    });
+
+    // 3. Economic Simulator & Chart
+    const ctxImpact = document.getElementById('impactChart').getContext('2d');
+    
+    // Register plugin if needed (using v3 format)
+    Chart.defaults.color = '#94A3B8';
+    Chart.defaults.font.family = "'Inter', sans-serif";
+
+    let impactChart = new Chart(ctxImpact, {
+        type: 'bar',
+        data: {
+            labels: ['NFL Draft ($164M)', 'Projected WC Impact'],
+            datasets: [{
+                label: 'Economic Impact ($M)',
+                data: [164, 0], // Updated later
+                backgroundColor: ['rgba(51, 65, 85, 0.8)', 'rgba(16, 185, 129, 0.8)'],
+                borderRadius: 6,
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)', titleFont: { size: 14 }, bodyFont: { size: 16, weight: 'bold' } }
+            },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.05)' }, border: { display: false } },
+                x: { grid: { display: false }, border: { display: false } }
+            }
+        }
+    });
+
+    function updateSimulation() {
+        const v = parseInt(document.getElementById('sim-visitors').value);
+        const s = parseInt(document.getElementById('sim-spend').value);
+        const stay = parseFloat(document.getElementById('sim-stay').value);
+        const isSkeptic = document.getElementById('sim-skeptic').checked;
+
+        document.getElementById('val-visitors').innerText = `${v}k`;
+        document.getElementById('val-spend').innerText = `$${s}`;
+
+        let rawImpact = (v * 1000) * s * stay; // total dollars
+        let mult = isSkeptic ? APP_DATA.baselineSim.skepticMultiplier : APP_DATA.baselineSim.defaultMultiplier;
+        
+        let finalImpact = (rawImpact * mult) / 1000000; // in millions
+        
+        let baseDiff = (finalImpact / APP_DATA.baselineSim.nflDraftImpact).toFixed(1);
+
+        // UI Updates
+        document.getElementById('sim-output-impact').innerText = `$${formatNumber(Math.round(finalImpact))}M`;
+        document.getElementById('sim-output-multiplier').innerText = `${baseDiff}x`;
+
+        if (isSkeptic) {
+            document.getElementById('sim-output-impact').classList.replace('text-emerald-400', 'text-rose-400');
+            impactChart.data.datasets[0].backgroundColor[1] = 'rgba(244, 63, 94, 0.8)';
+        } else {
+            document.getElementById('sim-output-impact').classList.replace('text-rose-400', 'text-emerald-400');
+            impactChart.data.datasets[0].backgroundColor[1] = 'rgba(16, 185, 129, 0.8)';
+        }
+
+        // Chart Update
+        impactChart.data.datasets[0].data[1] = Math.round(finalImpact);
+        impactChart.update();
+    }
+
+    ['sim-visitors', 'sim-spend', 'sim-stay', 'sim-skeptic'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateSimulation);
+    });
+    updateSimulation(); // Init
+
+    // 4. Render Base Camps
+    const campsGrid = document.getElementById('base-camps-grid');
+    APP_DATA.baseCamps.forEach(camp => {
+        let card = document.createElement('div');
+        card.className = "glass-card p-6 rounded-2xl flex gap-5 items-start group";
+        card.innerHTML = `
+            <div class="text-4xl filter drop-shadow-md group-hover:scale-110 transition-transform">${camp.flag}</div>
+            <div>
+                <h3 class="text-lg font-bold text-white mb-1 group-hover:text-amber-400 transition-colors">${camp.team}</h3>
+                <p class="text-sm font-semibold text-indigo-300 mb-2">${camp.facility}</p>
+                <p class="text-sm text-slate-400 leading-relaxed">${camp.desc}</p>
+            </div>
+        `;
+        campsGrid.appendChild(card);
+    });
+
+    // 5. Climate Chart
+    const ctxClimate = document.getElementById('climateChart').getContext('2d');
+    new Chart(ctxClimate, {
+        type: 'line',
+        data: {
+            labels: APP_DATA.climateData.dates,
+            datasets: [
+                {
+                    label: 'Avg High Temp (°C)',
+                    data: APP_DATA.climateData.avgHighs,
+                    borderColor: 'rgba(245, 158, 11, 0.5)',
+                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    tension: 0.4
+                },
+                {
+                    label: 'Est. WBGT (°C)',
+                    data: APP_DATA.climateData.wbgtEstimates,
+                    borderColor: 'rgba(244, 63, 94, 1)',
+                    backgroundColor: 'rgba(244, 63, 94, 0.2)',
+                    borderWidth: 3,
+                    pointBackgroundColor: '#0F172A',
+                    pointBorderColor: 'rgba(244, 63, 94, 1)',
+                    pointBorderWidth: 2,
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    fill: false,
+                    tension: 0.4
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)' },
+                annotation: {
+                    annotations: {
+                        line28: {
+                            type: 'line',
+                            yMin: 28, yMax: 28,
+                            borderColor: 'rgba(245, 158, 11, 0.8)',
+                            borderWidth: 2,
+                            borderDash: [4, 4],
+                            label: {
+                                display: true,
+                                content: 'Threshold: Cooling Break (28°C)',
+                                position: 'end',
+                                backgroundColor: 'rgba(245,158,11,0.2)',
+                                color: '#FCD34D'
+                            }
+                        },
+                        line32: {
+                            type: 'line',
+                            yMin: 32, yMax: 32,
+                            borderColor: 'rgba(244, 63, 94, 0.8)',
+                            borderWidth: 2,
+                            borderDash: [4, 4],
+                            label: {
+                                display: true,
+                                content: 'Threshold: Suspension Risk (32°C)',
+                                position: 'end',
+                                backgroundColor: 'rgba(244,63,94,0.2)',
+                                color: '#FDA4AF'
+                            }
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: { min: 20, max: 40, grid: { color: 'rgba(255, 255, 255, 0.05)' } },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+
+    // 6. Comparative Events Chart
+    const ctxComp = document.getElementById('comparativeChart').getContext('2d');
+    new Chart(ctxComp, {
+        type: 'bar',
+        data: {
+            labels: APP_DATA.comparativeEvents.labels,
+            datasets: [
+                {
+                    label: 'Visitors (Thousands)',
+                    data: APP_DATA.comparativeEvents.visitors,
+                    backgroundColor: 'rgba(79, 70, 229, 0.8)',
+                    yAxisID: 'y',
+                    borderRadius: 4
+                },
+                {
+                    label: 'Economic Impact ($ Millions)',
+                    data: APP_DATA.comparativeEvents.impact,
+                    backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                    yAxisID: 'y1',
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: { position: 'top', labels: { color: '#CBD5E1' } },
+                tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)' }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(255, 255, 255, 0.05)' } },
+                y: { grid: { display: false }, ticks: { font: { weight: 'bold' } } },
+                y1: { display: false } // Hidden but used for scaling if needed
+            }
+        }
+    });
+
+    // 7. Render Custom Network Map
+    const mapEl = document.getElementById('kc-map');
+    
+    // Draw lines first so they are under nodes
+    APP_DATA.mapEdges.forEach(edge => {
+        const n1 = APP_DATA.mapNodes.find(n => n.id === edge[0]);
+        const n2 = APP_DATA.mapNodes.find(n => n.id === edge[1]);
+        if(!n1 || !n2) return;
+
+        // Calculate distance and angle between percentages
+        const dx = n2.x - n1.x;
+        const dy = n2.y - n1.y;
+        
+        // This is strictly a visual approximation using percentages
+        // It won't be perfect responsive rendering for lines without complex JS resize observers
+        // Just setting them statically based on Container assumed rect
+        // For absolute robustness in purely percentage based divs without SVG:
+        const line = document.createElement('div');
+        line.className = 'map-line';
+        line.style.left = `${n1.x}%`;
+        line.style.top = `${n1.y}%`;
+        
+        // Use a tiny inline script to handle resize if we wanted, but static percentage hypotenuse approximations work okay if aspect ratio is stable.
+        const length = Math.sqrt(dx*dx + dy*dy);
+        const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        
+        line.style.width = `${length}%`;
+        line.style.transform = `rotate(${angle}deg)`;
+        
+        mapEl.appendChild(line);
+    });
+
+    // Draw nodes
+    APP_DATA.mapNodes.forEach(node => {
+        const div = document.createElement('div');
+        div.className = 'map-node group';
+        div.style.left = `${node.x}%`;
+        div.style.top = `${node.y}%`;
+        
+        let color = node.id === 'arrowhead' ? 'bg-rose-500' : (node.id === 'kci' ? 'bg-indigo-400' : 'bg-emerald-400');
+        let size = node.id === 'arrowhead' ? 'w-6 h-6' : 'w-4 h-4';
+        
+        div.innerHTML = `
+            <div class="relative flex justify-center items-center">
+                <div class="absolute inset-0 ${color} rounded-full animate-ping opacity-30"></div>
+                <div class="${size} ${color} rounded-full shadow-[0_0_15px_rgba(255,255,255,0.5)] border-2 border-white/20"></div>
+                <div class="absolute top-full mt-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-bold text-slate-200 drop-shadow-md bg-navy/60 px-2 py-1 rounded">
+                    ${node.name}
+                </div>
+                <div class="tooltip bg-slate-800 text-slate-300 text-sm p-3 rounded-lg shadow-2xl border border-slate-600">
+                    <p class="font-bold text-white mb-1">${node.name}</p>
+                    <p class="text-xs">${node.desc}</p>
+                </div>
+            </div>
+        `;
+        mapEl.appendChild(div);
+    });
+
+    // 8. Render KPI Tracker
+    const kpiGrid = document.getElementById('kpi-grid');
+    APP_DATA.legacyKpis.forEach(kpi => {
+        const card = document.createElement('div');
+        card.className = "glass-card p-6 rounded-2xl relative overflow-hidden group";
+        card.innerHTML = `
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-slate-700 to-slate-800 group-hover:from-indigo-500 group-hover:to-emerald-500 transition-all duration-500"></div>
+            <p class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1">${kpi.src}</p>
+            <h3 class="text-lg font-bold text-white mb-4">${kpi.name}</h3>
+            
+            <div class="flex justify-between items-end mb-2">
+                <div>
+                    <p class="text-xs text-slate-400 mb-1">2023 Baseline</p>
+                    <p class="text-xl font-mono text-slate-300">${kpi.baseline}</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-xs text-slate-400 mb-1">2026 Target</p>
+                    <p class="text-xl font-mono text-emerald-400">${kpi.target}</p>
+                </div>
+            </div>
+            
+            <div class="w-full bg-slate-800 rounded-full h-1.5 mt-4">
+                <div class="bg-slate-600 h-1.5 rounded-full" style="width: 20%"></div>
+            </div>
+            <p class="text-[10px] text-slate-500 mt-2 text-center tracking-widest uppercase">Tracking starts June 2026</p>
+        `;
+        kpiGrid.appendChild(card);
+    });
+
+    // Simple Intersection Observer for scroll animations
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+            }
+        });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.slide-up').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>
